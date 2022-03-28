@@ -1,5 +1,9 @@
 import type { Result } from "./types.ts";
 
+export interface CallbackOptions {
+  forceQueued?: boolean;
+}
+
 export interface PromisifyOptions {
   /** callbackから次の値を取り出すまでに実行されたcallbackの結果を最新でいくつまで保持するかを表す値
    *
@@ -20,22 +24,22 @@ export function promisify<T, E = unknown>(
   options?: PromisifyOptions,
 ): readonly [
   () => Promise<T>,
-  (value: T) => void,
-  (reason: E) => void,
+  (value: T, options?: CallbackOptions) => void,
+  (reason: E, options?: CallbackOptions) => void,
 ] {
   const maxQueued = options?.maxQueued === undefined
     ? undefined
     : Math.max(0, options.maxQueued);
-  if (maxQueued === 0) return promisifyWithoutQueue();
 
   const queue = [] as Result<T, E>[];
-  let _resolve: ((value: T) => void) | undefined;
-  let _reject: ((value: E) => void) | undefined;
+  const queue2 = [] as Result<T, E>[];
+  let _resolve: ((value: T, options?: CallbackOptions) => void) | undefined;
+  let _reject: ((value: E, options?: CallbackOptions) => void) | undefined;
 
   /** queueから一つ取り出す。空なら_resolveをセットする */
   const waitForSettled = async () => {
     if (maxQueued !== undefined) queue.splice(0, queue.length - maxQueued);
-    const value = queue.shift();
+    const value = queue2.shift() ?? queue.shift();
     if (value) {
       if (value.success) return value.value;
       throw value.reason;
@@ -48,43 +52,30 @@ export function promisify<T, E = unknown>(
       },
     );
   };
-  const resolve = (value: T) => {
+  const resolve = (value: T, options?: CallbackOptions) => {
     if (!_resolve) {
-      queue.push({ success: true, value });
+      if (options?.forceQueued) {
+        queue2.push({ success: true, value });
+      } else {
+        queue.push({ success: true, value });
+      }
       return;
     }
     _resolve(value);
     _resolve = _reject = undefined;
   };
-  const reject = (value: E) => {
+  const reject = (reason: E, options?: CallbackOptions) => {
     if (!_reject) {
-      queue.push({ success: false, reason: value });
+      if (options?.forceQueued) {
+        queue2.push({ success: false, reason });
+      } else {
+        queue.push({ success: false, reason });
+      }
       return;
     }
-    _reject(value);
+    _reject(reason);
     _resolve = _reject = undefined;
   };
-
-  return [waitForSettled, resolve, reject] as const;
-}
-
-function promisifyWithoutQueue<T, E = unknown>(): readonly [
-  () => Promise<T>,
-  (value: T) => void,
-  (reason: E) => void,
-] {
-  let _resolve: ((value: T) => void) | undefined;
-  let _reject: ((value: E) => void) | undefined;
-
-  const waitForSettled = () =>
-    new Promise<T>(
-      (res, rej) => {
-        _resolve = res;
-        _reject = rej;
-      },
-    );
-  const resolve = (value: T) => _resolve?.(value);
-  const reject = (value: E) => _reject?.(value);
 
   return [waitForSettled, resolve, reject] as const;
 }
