@@ -38,6 +38,8 @@ Deno.test("promisify()", async (t) => {
       pending = get();
       resolve(4);
       assert(await pending === 4);
+      // queueに何も残っていないので、未解決のまま止まり続けることになる
+      // assert(await get() === 5);
       pending = get();
       resolve(5);
       resolve(6);
